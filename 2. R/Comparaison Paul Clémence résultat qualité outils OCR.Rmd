@@ -1,0 +1,69 @@
+---
+title: "Stats OCR Clémence Paul"
+output: html_document
+date: "2025-06-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include=FALSE}
+rm(list = ls())
+packages <- c("readxl", "openxlsx", "dplyr", "corrplot")
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+lapply(packages, install_if_missing)
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(tidyr)
+
+file_path_data_Clem <- file.choose()
+df_clem <- read_excel(file_path_data_Clem)
+
+file_path_data_Paul <- file.choose()
+df_Paul <- read_excel(file_path_data_Paul)
+```
+
+
+```{r}
+# Ajouter une colonne pour identifier la source des données
+df_clem$Source <- "Clémence"
+df_Paul$Source <- "Paul"
+
+# Combiner les deux dataframes
+combined_df <- bind_rows(df_clem, df_Paul)
+
+# Préparation des données au format long pour ggplot
+combined_df_long <- combined_df %>%
+  pivot_longer(
+    cols = c(WER, CER),
+    names_to = "Métrique",
+    values_to = "Valeur"
+  )
+```
+
+```{r}
+# Filtrer les données pour le CER
+cer_df <- combined_df_long %>% filter(Métrique == "CER")
+
+# Graphique avec comparaison côte à côte
+ggplot(cer_df, aes(x = `Outil OCR`, y = Valeur, fill = Source)) +
+  geom_boxplot(position = position_dodge(width = 0.75), outlier.shape = 16, outlier.size = 2) +
+  labs(
+    title = "Distribution du CER par outil OCR (Paul vs Clémence)",
+    x = "Outil OCR",
+    y = "CER",
+    fill = "Source"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+

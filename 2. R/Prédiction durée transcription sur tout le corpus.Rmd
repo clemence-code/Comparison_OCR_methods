@@ -1,0 +1,292 @@
+---
+title: "Prédiction durée transcription sur tout le corpus"
+output: html_document
+date: "2025-06-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+packages <- c("readxl", "openxlsx", "dplyr", "corrplot")
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+lapply(packages, install_if_missing)
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(tidyr)
+library(xtable)
+library(tibble)
+```
+
+```{r}
+# Charger le fichier Excel 
+file_path <- file.choose()
+df_tot <- read_excel(file_path)
+
+colonnes_voulues <- c(
+  "Bailliage",
+  "Sous-dossier",
+  "Sous-sous-dossier",
+  "Nombre de PNG",
+  "Nombre de pages procès verbal",
+  "Nbre de page hors procès verbal",
+  "Man_dur_tot_mins",
+  "Man_dur_moy_page_mins",
+  "Lect_dur_tot_mins",
+  "Lect_dur_page_mins"
+)
+```
+
+```{r}
+df_tot_filtré <- df_tot %>% select(all_of(colonnes_voulues))
+# Liste des colonnes à analyser
+vars_duree <- c("Man_dur_tot_mins", "Man_dur_moy_page_mins", 
+                "Lect_dur_tot_mins", "Lect_dur_page_mins")
+
+# Calcul des statistiques en excluant les 0
+df_stats_duree <- df_tot_filtré %>%
+  select(all_of(vars_duree)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valeur") %>%
+  filter(Valeur > 0) %>%  # Exclure les 0
+  group_by(Variable) %>%
+  summarise(
+    N = n(),
+    Moyenne = round(mean(Valeur, na.rm = TRUE), 3),
+    Médiane = round(median(Valeur, na.rm = TRUE), 3),
+    Écart_type = round(sd(Valeur, na.rm = TRUE), 3),
+    Min = round(min(Valeur, na.rm = TRUE), 3),
+    Max = round(max(Valeur, na.rm = TRUE), 3)
+  )
+
+print(df_stats_duree)
+xtable(df_stats_duree)
+```
+
+```{r}
+# Colonnes concernées
+vars_duree <- c("Man_dur_tot_mins", "Man_dur_moy_page_mins", 
+                "Lect_dur_tot_mins", "Lect_dur_page_mins")
+
+# Tableau statistique par Sous-dossier
+df_stats_par_sousdossier <- df_tot_filtré %>%
+  select(`Sous-dossier`, all_of(vars_duree)) %>%
+  pivot_longer(cols = all_of(vars_duree), names_to = "Variable", values_to = "Valeur") %>%
+  filter(Valeur > 0) %>%
+  group_by(`Sous-dossier`, Variable) %>%
+  summarise(
+    N = n(),
+    Moyenne = round(mean(Valeur, na.rm = TRUE), 3),
+    Médiane = round(median(Valeur, na.rm = TRUE), 3),
+    Écart_type = round(sd(Valeur, na.rm = TRUE), 3),
+    Min = round(min(Valeur, na.rm = TRUE), 3),
+    Max = round(max(Valeur, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+# Affichage
+print(df_stats_par_sousdossier)
+```
+
+# Transcription manuelle
+```{r}
+# 1. Moyenne globale × nombre total de cahiers
+man_dur_moyenne <- df_tot_filtré %>%
+  filter(Man_dur_tot_mins > 0) %>%
+  summarise(moy = mean(Man_dur_tot_mins, na.rm = TRUE)) %>%
+  pull(moy)
+
+nb_total_cahiers <- nrow(df_tot_filtré)
+
+est1_minutes <- man_dur_moyenne * nb_total_cahiers
+est1_heures <- est1_minutes / 60
+est1_jours <- est1_heures / 6
+
+# 2. Moyenne par sous-dossier × effectifs
+moyennes_valides <- df_tot_filtré %>%
+  filter(Man_dur_tot_mins > 0) %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(moy_duree = mean(Man_dur_tot_mins, na.rm = TRUE), .groups = "drop")
+
+effectifs_complets <- df_tot_filtré %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(nb_cahiers_total = n(), .groups = "drop")
+
+estimations_sous_dossier <- left_join(moyennes_valides, effectifs_complets, by = "Sous-dossier") %>%
+  mutate(duree_estimee = moy_duree * nb_cahiers_total)
+
+est2_minutes <- sum(estimations_sous_dossier$duree_estimee, na.rm = TRUE)
+est2_heures <- est2_minutes / 60
+est2_jours <- est2_heures / 6
+
+# 3. Moyenne par page × nombre de pages
+df_valide_pages <- df_tot_filtré %>%
+  filter(`Man_dur_moy_page_mins` > 0, `Nbre de page hors procès verbal` > 0)
+
+moyennes_pages <- df_valide_pages %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(moy_par_page = mean(`Man_dur_moy_page_mins`, na.rm = TRUE), .groups = "drop")
+
+total_pages <- df_tot_filtré %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(total_pages = sum(`Nbre de page hors procès verbal`, na.rm = TRUE), .groups = "drop")
+
+estim_pages <- left_join(moyennes_pages, total_pages, by = "Sous-dossier") %>%
+  mutate(duree_estimee = moy_par_page * total_pages)
+
+est3_minutes <- sum(estim_pages$duree_estimee, na.rm = TRUE)
+est3_heures <- est3_minutes / 60
+est3_jours <- est3_heures / 6
+
+# 4. Tableau de synthèse
+tableau_estimations <- tibble(
+  Méthode = c(
+    "1. Moyenne globale × nb cahiers",
+    "2. Moyenne par sous-dossier × effectif",
+    "3. Moyenne par page × nb pages"
+  ),
+  `Durée (minutes)` = round(c(est1_minutes, est2_minutes, est3_minutes), 1),
+  `Durée (heures)` = round(c(est1_heures, est2_heures, est3_heures), 1),
+  `Durée (jours de 6h)` = round(c(est1_jours, est2_jours, est3_jours), 1)
+)
+
+tableau_estimations
+```
+
+
+```{r}
+# 1. Nombre total de cahiers
+nb_total_cahiers <- nrow(df_tot_filtré)
+
+# 2. Estimation Arkindex + LLM (3 min/cahier)
+Ark_LLM_minutes <- 3 * nb_total_cahiers
+Ark_LLM_heures <- Ark_LLM_minutes / 60
+Ark_LLM_jours_6h <- Ark_LLM_heures / 6
+
+# 3. Estimation Arkindex + LLM + Correction (7 min/cahier)
+Ark_LLM_Corr_minutes <- 7 * nb_total_cahiers
+Ark_LLM_Corr_heures <- Ark_LLM_Corr_minutes / 60
+Ark_LLM_Corr_jours_6h <- Ark_LLM_Corr_heures / 6
+
+# 4. Tableau combiné Arkindex
+tableau_ark_llm <- tibble(
+  Type = "Arkindex + LLM",
+  Méthode = "4. Arkindex + LLM",
+  `Durée (minutes)` = round(Ark_LLM_minutes, 1),
+  `Durée (heures)` = round(Ark_LLM_heures, 1),
+  `Durée (jours de 6h)` = round(Ark_LLM_jours_6h, 1)
+)
+
+tableau_ark_llm_corr <- tibble(
+  Type = "Arkindex + LLM",
+  Méthode = "5. Arkindex + LLM + Correction",
+  `Durée (minutes)` = round(Ark_LLM_Corr_minutes, 1),
+  `Durée (heures)` = round(Ark_LLM_Corr_heures, 1),
+  `Durée (jours de 6h)` = round(Ark_LLM_Corr_jours_6h, 1)
+)
+
+# 5. Combinaison des deux lignes Arkindex
+tableau_ark_llm_total <- bind_rows(tableau_ark_llm, tableau_ark_llm_corr)
+
+# 6. Affichage
+tableau_ark_llm_total
+```
+
+# Lecture
+```{r}
+# 1. Moyenne globale × nb cahiers
+lect_dur_moy_globale <- df_tot_filtré %>%
+  filter(Lect_dur_tot_mins > 0) %>%
+  summarise(moy = mean(Lect_dur_tot_mins, na.rm = TRUE)) %>%
+  pull(moy)
+
+nb_total_cahiers <- nrow(df_tot_filtré)
+
+est1_minutes <- lect_dur_moy_globale * nb_total_cahiers
+est1_heures <- est1_minutes / 60
+est1_jours <- est1_heures / 6
+
+# 2. Moyenne par sous-dossier × effectif
+moyennes_sous_dossier <- df_tot_filtré %>%
+  filter(Lect_dur_tot_mins > 0) %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(moy_duree = mean(Lect_dur_tot_mins, na.rm = TRUE), .groups = "drop")
+
+effectifs_sous_dossier <- df_tot_filtré %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(nb_cahiers = n(), .groups = "drop")
+
+estim_sous_dossier <- left_join(moyennes_sous_dossier, effectifs_sous_dossier, by = "Sous-dossier") %>%
+  mutate(duree_estimee = moy_duree * nb_cahiers)
+
+est2_minutes <- sum(estim_sous_dossier$duree_estimee, na.rm = TRUE)
+est2_heures <- est2_minutes / 60
+est2_jours <- est2_heures / 6
+
+# 3. Moyenne par page × nb pages
+df_valides_pages <- df_tot_filtré %>%
+  filter(Lect_dur_page_mins > 0, `Nbre de page hors procès verbal` > 0)
+
+moyennes_pages <- df_valides_pages %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(moy_par_page = mean(Lect_dur_page_mins, na.rm = TRUE), .groups = "drop")
+
+total_pages <- df_tot_filtré %>%
+  group_by(`Sous-dossier`) %>%
+  summarise(total_pages = sum(`Nbre de page hors procès verbal`, na.rm = TRUE), .groups = "drop")
+
+estim_pages <- left_join(moyennes_pages, total_pages, by = "Sous-dossier") %>%
+  mutate(duree_estimee = moy_par_page * total_pages)
+
+est3_minutes <- sum(estim_pages$duree_estimee, na.rm = TRUE)
+est3_heures <- est3_minutes / 60
+est3_jours <- est3_heures / 6
+
+# 4. Tableau de synthèse
+tableau_lect_dur <- tibble(
+  Méthode = c(
+    "1. Moyenne globale × nb cahiers",
+    "2. Moyenne par sous-dossier × effectif",
+    "3. Moyenne par page × nb pages"
+  ),
+  `Durée (minutes)` = round(c(est1_minutes, est2_minutes, est3_minutes), 1),
+  `Durée (heures)` = round(c(est1_heures, est2_heures, est3_heures), 1),
+  `Durée (jours de 6h)` = round(c(est1_jours, est2_jours, est3_jours), 1)
+)
+
+# 5. Affichage
+tableau_lect_dur
+```
+
+```{r}
+# 1. Ajouter colonne "Type" aux tableaux existants
+tableau_transcription <- tableau_estimations %>%
+  mutate(Type = "Transcription manuelle")
+
+tableau_ark_llm <- tableau_ark_llm %>%
+  mutate(Type = "Arkindex + LLM")
+
+tableau_lecture <- tableau_lect_dur %>%
+  mutate(Type = "Lecture")
+
+# 2. Combiner tous les tableaux
+tableau_total <- bind_rows(
+  tableau_transcription,
+  tableau_ark_llm_total,
+  tableau_lecture
+) %>%
+  select(Type, Méthode, `Durée (minutes)`, `Durée (heures)`, `Durée (jours de 6h)`)
+
+# 3. Affichage final
+tableau_total
+library(writexl)
+
+write_xlsx(tableau_total, path = "tableau_total.xlsx")
+```

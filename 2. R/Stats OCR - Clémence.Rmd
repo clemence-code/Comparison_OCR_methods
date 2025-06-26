@@ -1,0 +1,533 @@
+---
+title: "Qualité de l'OCR"
+output: html_document
+date: "2025-06-02"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+```
+
+# 1. Importations des données
+```{r,include=FALSE}
+packages <- c("readxl", "openxlsx", "dplyr", "corrplot")
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+lapply(packages, install_if_missing)
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(xtable)
+
+file_path_data <- file.choose()
+df <- read_excel(file_path_data)
+```
+
+```{r}
+# === 3. Préparation des variables ===
+df$`Outil OCR` <- as.factor(df$`Outil OCR`)
+df$Catégorie <- as.factor(df$Catégorie)
+df$`Durée outil (minutes)` <- as.numeric(df$`Durée outil (minutes)`)
+df$`Caractères par minute`<- as.numeric(df$`Caractères par minute`)
+```
+
+# 2. Statistiques descriptives
+## 2.1 Par outil OCR
+
+```{r}
+desc_ocr <- df %>%
+  group_by(`Outil OCR`) %>%
+  summarise(
+    Nb_obs = n(),
+    WER_moy = mean(WER, na.rm = TRUE),
+    WER_med = median(WER, na.rm = TRUE),
+    WER_sd = sd(WER, na.rm = TRUE),
+    Min_WER = min(WER, na.rm = TRUE),
+    Max_WER = max(WER, na.rm = TRUE),
+  )
+
+desc_ocr_CER <- df%>%
+  group_by(`Outil OCR`) %>%
+  summarise(
+    Nb_obs = n(),
+    CER_moy = mean(CER, na.rm = TRUE),
+    CER_med = median(CER, na.rm = TRUE),
+    CER_sd = sd(CER, na.rm = TRUE),
+    Min_CER = min(CER, na.rm = TRUE),
+    Max_CER = max(CER, na.rm = TRUE),
+  )
+
+print(desc_ocr)
+print(desc_ocr_CER)
+```
+
+```{r}
+# Calculer la moyenne par Outil OCR et Catégorie
+df_resume_all <- df %>%
+  group_by(`Outil OCR`, Catégorie) %>%
+  summarise(Duree_moy = mean(`Caractères par minute`, na.rm = TRUE), .groups = "drop")
+
+# Graphique en barres
+ggplot(df_resume_all, aes(x = Catégorie, y = Duree_moy, fill = `Outil OCR`)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Nombre de caractères identifiés par minute selon l'outil OCR et la catégorie",
+    x = "Catégorie",
+    y = "Caractères par minute",
+    fill = "Outil OCR"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+# Filtrer les outils ciblés
+df_filtered <- df %>%
+  filter(`Outil OCR` %in% c("1. Main", "2. Lecture", "3. Arkindex", "4. Transkribus", "5. Lectaurep"))
+
+# Graphe : un panneau par outil, couleurs par Catégorie
+ggplot(df_filtered, aes(x = CER, y = `Durée outil (minutes)`, color = Catégorie)) +
+  geom_point(alpha = 0.7, size = 2) +
+  facet_wrap(~ `Outil OCR`) +
+  labs(
+    title = "CER vs Durée de traitement – par outil OCR et catégorie",
+    x = "CER (Character Error Rate)",
+    y = "Durée (minutes)",
+    color = "Catégorie"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "bold"),
+    legend.position = "bottom",
+    axis.text = element_text(size = 9)
+  )
+```
+
+### 2.1.1 Main
+```{r}
+# Filtrer pour "1. Main"
+df_main <- df %>%
+  filter(`Outil OCR` == "1. Main")
+
+# Calculer la durée moyenne par catégorie
+df_resume <- df_main %>%
+  group_by(Catégorie) %>%
+  summarise(Duree_moy = mean(`Caractères par minute`, na.rm = TRUE))
+
+# Graphique en barres
+ggplot(df_resume, aes(x = Catégorie, y = Duree_moy, fill = Catégorie)) +
+  geom_col() +
+  labs(
+    title = "Nombre de caractères identifiés par minutes (Transcription manuelle)",
+    x = "Catégorie",
+    y = "Nombre de caractères identifiés par minutes"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  guides(fill = "none")
+```
+
+## 2.1.2 Lecture
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Données Lecture uniquement
+df_lecture <- df %>%
+  filter(`Outil OCR` == "2. Lecture") %>%
+  mutate(Caractères_corrects_par_minute = `Caractères par minute` * `Accuracy caractères`)
+
+# Moyennes Lecture
+df_lecture_cat <- df_lecture %>%
+  group_by(Catégorie) %>%
+  summarise(
+    `Caractères corrects/min` = mean(Caractères_corrects_par_minute, na.rm = TRUE),
+    `Caractères totaux/min` = mean(`Caractères par minute`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Ajouter ligne "1. Main" (transcription manuelle) – on suppose même vitesse de frappe pour simplifier
+df_manuel <- df %>%
+  filter(`Outil OCR` == "1. Main") %>%
+  group_by(Catégorie) %>%
+  summarise(
+    `Caractères corrects/min` = mean(`Caractères par minute`, na.rm = TRUE), # Accuracy = 1
+    `Caractères totaux/min` = mean(`Caractères par minute`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Marquer les types de source
+df_lecture_cat$Source <- "2. Lecture"
+df_manuel$Source <- "1. Main"
+
+# Fusion
+df_all <- bind_rows(df_lecture_cat, df_manuel)
+
+# Reshape long
+df_plot <- df_all %>%
+  pivot_longer(cols = c(`Caractères corrects/min`, `Caractères totaux/min`),
+               names_to = "Type", values_to = "Valeur")
+
+# Graphe final
+ggplot(df_plot, aes(x = Catégorie, y = Valeur, fill = interaction(Source, Type))) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Lecture vs Transcription manuelle – Caractères par minute",
+    x = "Catégorie",
+    y = "Nombre de caractères par minute",
+    fill = "Méthode / Type"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 2.1.3 Arkindex
+
+```{r}
+# Données Arkindex uniquement
+df_arkindex <- df %>%
+  filter(`Outil OCR` == "3. Arkindex") %>%
+  mutate(Caractères_corrects_par_minute = `Caractères par minute` * `Accuracy caractères`)
+
+# Moyennes par catégorie pour Arkindex
+df_ark_cat <- df_arkindex %>%
+  group_by(Catégorie) %>%
+  summarise(
+    `Caractères corrects/min` = mean(Caractères_corrects_par_minute, na.rm = TRUE),
+    `Caractères totaux/min` = mean(`Caractères par minute`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Données manuelles
+df_manuel <- df %>%
+  filter(`Outil OCR` == "1. Main") %>%
+  group_by(Catégorie) %>%
+  summarise(
+    `Caractères corrects/min` = mean(`Caractères par minute`, na.rm = TRUE), # Accuracy = 1
+    `Caractères totaux/min` = mean(`Caractères par minute`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Ajouter l’étiquette Source
+df_ark_cat$Source <- "3. Arkindex"
+df_manuel$Source <- "1. Main"
+
+# Fusionner les deux sources
+df_all <- bind_rows(df_ark_cat, df_manuel)
+
+# Passer au format long pour ggplot
+df_plot <- df_all %>%
+  pivot_longer(cols = c(`Caractères corrects/min`, `Caractères totaux/min`),
+               names_to = "Type", values_to = "Valeur")
+
+# Graphe final
+ggplot(df_plot, aes(x = Catégorie, y = Valeur, fill = interaction(Source, Type))) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Arkindex vs Transcription manuelle – Caractères par minute",
+    x = "Catégorie",
+    y = "Nombre de caractères par minute",
+    fill = "Méthode / Type"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+## 2.1.4 Transkribus
+
+```{r}
+df_trans <- df %>% filter(`Outil OCR` == "4. Transkribus")
+
+ggplot(df_trans, aes(x = CER, y = `Durée outil (minutes)`, color = Catégorie)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "CER vs Durée – 4. Transkribus",
+    x = "CER",
+    y = "Durée (minutes)",
+    color = "Catégorie"
+  ) +
+  theme_minimal()
+```
+
+## 2.1.5 Lectaurep
+
+```{r}
+df_lectaurep <- df %>% filter(`Outil OCR` == "5. Lectaurep")
+
+ggplot(df_lectaurep, aes(x = CER, y = `Durée outil (minutes)`, color = Catégorie)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "CER vs Durée – 5. Lectaurep",
+    x = "CER",
+    y = "Durée (minutes)",
+    color = "Catégorie"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+# Filtrer uniquement les outils que tu veux comparer (facultatif)
+df_filtered <- df %>%
+  filter(`Outil OCR` %in% c("1. Main", "2. Lecture", "3. Arkindex", "4. Transkribus", "5. Lectaurep"))
+
+ggplot(df_filtered, aes(x = WER, y = `Durée outil (minutes)`, color = `Outil OCR`)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "WER vs Durée pour chaque outil OCR",
+    x = "WER (Character Error Rate)",
+    y = "Durée (minutes)",
+    color = "Outil OCR"
+  ) +
+  theme_minimal()
+
+# Filtrer uniquement Lecture, Arkindex, Transkribus
+df_filtered <- df %>%
+  filter(`Outil OCR` %in% c("2. Lecture", "3. Arkindex", "4. Transkribus"))
+
+# Graphique WER vs Durée
+ggplot(df_filtered, aes(x = WER, y = `Durée outil (minutes)`, color = `Outil OCR`)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "WER vs Durée – Lecture, Arkindex, Transkribus",
+    x = "WER (Word Error Rate)",
+    y = "Durée (minutes)",
+    color = "Outil OCR"
+  ) +
+  theme_minimal()
+
+ggplot(df_filtered, aes(x = CER, y = `Durée outil (minutes)`, color = `Outil OCR`)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "CER vs Durée – Lecture, Arkindex, Transkribus",
+    x = "CER (Word Error Rate)",
+    y = "Durée (minutes)",
+    color = "Outil OCR"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+# 2.2 Statistiques descriptives par outil OCR et par catégorie
+```{r}
+desc_ocr_cat <- df %>%
+  group_by(`Outil OCR`, Catégorie) %>%
+  summarise(
+    Nb_obs = n(),
+    WER_moy = mean(WER, na.rm = TRUE),
+    WER_med = median(WER, na.rm = TRUE),
+    WER_sd = sd(WER, na.rm = TRUE),
+    
+    CER_moy = mean(CER, na.rm = TRUE),
+    CER_med = median(CER, na.rm = TRUE),
+    CER_sd = sd(CER, na.rm = TRUE),
+    
+    Duree_moy = mean(`Durée outil (minutes)`, na.rm = TRUE),
+    Duree_med = median(`Durée outil (minutes)`, na.rm = TRUE),
+    Duree_sd = sd(`Durée outil (minutes)`, na.rm = TRUE)
+  ) %>%
+  arrange(`Outil OCR`, Catégorie)
+print(desc_ocr_cat)
+```
+
+
+## 2.2 Par Catégorie
+```{r}
+desc_calli <- df %>%
+  group_by(Catégorie) %>%
+  summarise(
+    Nb_obs = n(),
+    WER_moy = mean(WER, na.rm = TRUE),
+    WER_med = median(WER, na.rm = TRUE),
+    WER_sd = sd(WER, na.rm = TRUE),
+    
+    CER_moy = mean(CER, na.rm = TRUE),
+    CER_med = median(CER, na.rm = TRUE),
+    CER_sd = sd(CER, na.rm = TRUE),
+    
+    Duree_moy = mean(`Durée outil (minutes)`, na.rm = TRUE),
+    Duree_med = median(`Durée outil (minutes)`, na.rm = TRUE),
+    Duree_sd = sd(`Durée outil (minutes)`, na.rm = TRUE),
+  )
+print(desc_calli)
+```
+
+## 2.3 Export des résultats
+```{r}
+# 7. Export des statistiques OCR
+library(openxlsx)
+write.xlsx(desc_ocr, file = "Statistiques_OCR_par_Outil.xlsx", rowNames = FALSE)
+```
+
+## 2.4 Visualisation WER et CER
+```{r}
+
+# WER moyen par outil OCR
+ggplot(df, aes(x = `Outil OCR`, y = WER, fill = `Outil OCR`)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Distribution du WER par Outil OCR", y = "WER")
+
+# CER moyen par outil OCR
+ggplot(df, aes(x = `Outil OCR`, y = CER, fill = `Outil OCR`)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Distribution du CER par Outil OCR", y = "CER")
+
+# Durée par outil OCR
+ggplot(df, aes(x = `Outil OCR`, y = `Durée outil (minutes)`, fill = `Outil OCR`)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Durée moyenne par Outil OCR", y = "Durée (min)")
+```
+
+## 2.5 Visualisation de la durée par catégorie
+```{r}
+ggplot(df, aes(x = `Outil OCR`, y = `Caractères par minute`, fill = `Outil OCR`)) +
+  geom_boxplot() +
+  labs(
+    title = "Vitesse de traitement par méthode OCR",
+    x = "Méthode OCR",
+    y = "Caractères par minute"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+```
+
+# 4. Modèle de régression
+## 4.1 CER
+```{r}
+# Conversion des variables catégorielles en facteurs
+df$Catégorie <- as.factor(df$Catégorie)
+df$`Outil OCR` <- as.factor(df$`Outil OCR`)
+
+# Vérification des NA
+summary(df)
+
+# Nouveau modèle sans les variables non significatives
+modele_cer_reduit <- lm(CER ~ 
+                          Catégorie +
+                          `OCR`,
+                        data = df_clean)
+
+# Résumé du modèle réduit
+summary(modele_cer_reduit)
+
+# Vérification de la multicolinéarité
+library(car)
+vif(modele_cer_reduit)
+
+# Installer et charger multcomp si ce n'est pas déjà fait
+install.packages("multcomp")
+library(multcomp)
+
+# On reprend le modèle avec la variable "Outil OCR"
+contraste <- glht(modele_cer_reduit, linfct = mcp(`Outil OCR` = "Arkindex"))
+
+# Résumé des comparaisons multiples
+summary(contraste)
+
+
+```
+
+```{r}
+# Comparaisons post-hoc entre outils OCR
+library(multcomp)
+# Modèle avec le nom simplifié
+modele_cer_reduit <- lm(CER ~ Catégorie + OCR, data = df_clean)
+
+comparaison_ocr <- glht(modele_cer_reduit, linfct = mcp(OCR = "Tukey"))
+summary(comparaison_ocr)
+
+# Tableau des résultats (coefficients, p-values)
+library(broom)
+results <- tidy(comparaison_ocr)
+results
+```
+
+```{r}
+# Transformer les résultats glht en data.frame
+res_df <- as.data.frame(summary(comparaison_ocr)$linfct)
+estimates <- summary(comparaison_ocr)$coefficients
+stderr <- summary(comparaison_ocr)$sigma
+conf <- confint(comparaison_ocr)
+
+comparaisons <- rownames(conf$confint)
+df_plot <- data.frame(
+  Comparaison = comparaisons,
+  Estimate = conf$confint[, "Estimate"],
+  Lower = conf$confint[, "lwr"],
+  Upper = conf$confint[, "upr"]
+)
+
+# Visualisation ggplot
+ggplot(df_plot, aes(x = Estimate, y = reorder(Comparaison, Estimate))) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_errorbarh(aes(xmin = Lower, xmax = Upper), height = 0.2, color = "grey40") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Différences de CER entre outils OCR (Test de Tukey)",
+       x = "Différence de CER estimée",
+       y = "Comparaison d'outils") +
+  theme_minimal()
+```
+## 4.2 Durée
+```{r}
+# Création de la variable dérivée
+df_clean <- df %>%
+  mutate(Caracteres_corrects_par_min = `Accuracy caractères` * `Caractères OCR par minute`)
+df_clean <- df_clean %>%
+  rename(OCR = `Outil OCR`)
+```
+
+```{r}
+# 1. Créer la variable dérivée
+df_clean <- df %>%
+  mutate(Caracteres_corrects_par_min = `Accuracy caractères` * `Caractères OCR par minute`) %>%
+  rename(OCR = `Outil OCR`)
+
+# 2. Modèle linéaire
+modele_corrects <- lm(Caracteres_corrects_par_min ~ Catégorie + OCR, data = df_clean)
+summary(modele_corrects)
+```
+
+```{r}
+# 3. Comparaison post-hoc (Tukey)
+comparaison_corrects <- glht(modele_corrects, linfct = mcp(OCR = "Tukey"))
+summary(comparaison_corrects)
+
+# 4. Visualisation
+conf <- confint(comparaison_corrects)
+comparaisons <- rownames(conf$confint)
+
+df_plot_corrects <- data.frame(
+  Comparaison = comparaisons,
+  Estimate = conf$confint[, "Estimate"],
+  Lower = conf$confint[, "lwr"],
+  Upper = conf$confint[, "upr"]
+)
+
+ggplot(df_plot_corrects, aes(x = Estimate, y = reorder(Comparaison, Estimate))) +
+  geom_point(color = "darkorange", size = 3) +
+  geom_errorbarh(aes(xmin = Lower, xmax = Upper), height = 0.2, color = "grey40") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Comparaison du nombre de caractères corrects par minute",
+       x = "Différence estimée",
+       y = "Comparaison d'outils") +
+  theme_minimal()
+
+```

@@ -1,0 +1,54 @@
+---
+title: "Qualité de l'OCR"
+output: html_document
+date: "2025-06-02"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Importations des données
+```{r,include=FALSE}
+rm(list = ls())
+packages <- c("readxl", "openxlsx", "dplyr", "corrplot")
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+lapply(packages, install_if_missing)
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+
+file_path_data <- file.choose()
+df <- read_excel(file_path_data)
+```
+
+```{r}
+# === 3. Préparation des variables ===
+df$`Outil OCR` <- as.factor(df$`Outil OCR`)
+df$Catégorie <- as.factor(df$Catégorie)
+df$`Durée outil (minutes)` <- as.numeric(df$`Durée outil (minutes)`)
+df$`Caractères par minute`<- as.numeric(df$`Caractères par minute`)
+```
+
+# 2. Graphique CER/WER
+
+```{r}
+# 📊 WER moyen par outil OCR
+ggplot(df, aes(x = `Outil OCR`, y = WER, fill = `Outil OCR`)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Distribution du WER par Outil OCR", y = "WER")
+
+# 📊 CER moyen par outil OCR
+ggplot(df, aes(x = `Outil OCR`, y = CER, fill = `Outil OCR`)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Distribution du CER par Outil OCR", y = "CER")
+
+```
+

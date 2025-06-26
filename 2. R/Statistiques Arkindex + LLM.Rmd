@@ -1,0 +1,74 @@
+---
+title: "Arkindex + LLM"
+output: html_document
+date: "2025-06-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+packages <- c("readxl", "openxlsx", "dplyr", "corrplot")
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+lapply(packages, install_if_missing)
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(tidyr)
+library(xtable)
+library(tibble)
+```
+```{r}
+file_path_data <- file.choose()
+df <- read_excel(file_path_data)
+```
+
+```{r}
+df_LLM_CER <- df %>%
+  group_by(`Outil OCR`) %>%
+  summarise(
+    N_CER = sum(!is.na(CER)),
+    Moy_CER = mean(CER, na.rm = TRUE),
+    Médiane_CER = median(CER, na.rm = TRUE),
+    SD_CER = sd(CER, na.rm = TRUE),
+    Min_CER = min(CER, na.rm = TRUE),
+    Max_CER = max(CER, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(df_LLM_CER)
+
+df_LLM_WER <- df %>%
+  group_by(`Outil OCR`) %>%
+  summarise(
+    N_WER = sum(!is.na(WER)),
+    Moy_WER = mean(WER, na.rm = TRUE),
+    Médiane_WER = median(WER, na.rm = TRUE),
+    SD_WER = sd(WER, na.rm = TRUE),
+    Min_WER = min(WER, na.rm = TRUE),
+    Max_WER = max(WER, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(df_LLM_WER)
+
+df_stats_CER_calligraphie <- df %>%
+  group_by(`Outil OCR`, `Calligraphie`) %>%
+  summarise(
+    N_CER = sum(!is.na(CER)),
+    Moy_CER = mean(CER, na.rm = TRUE),
+    Médiane_CER = median(CER, na.rm = TRUE),
+    SD_CER = sd(CER, na.rm = TRUE),
+    Min_CER = min(CER, na.rm = TRUE),
+    Max_CER = max(CER, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(df_stats_CER_calligraphie)
+```
